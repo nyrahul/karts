@@ -2,53 +2,75 @@ package smoke
 
 import (
 	"fmt"
+	"time"
 
-	util "github.com/kubearmor/karts/kartutil"
+	. "github.com/kubearmor/karts/kartutil"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	log "github.com/sirupsen/logrus"
 )
 
 var _ = BeforeSuite(func() {
-	log.Println("====================[ BeforeSuite ]========================")
-	err := util.StartKubearmor(true)
+	// start kubearmor
+	err := StartKubearmor(true)
 	Expect(err).To(BeNil())
+
+	// install wordpress-mysql app
+	err = K8sApply([]string{"wordpress-mysql-deployment.yaml"})
+	Expect(err).To(BeNil())
+
+	// enable kubearmor port forwarding
+	err = KubearmorPortForward()
+	Expect(err).To(BeNil())
+
 })
 
 var _ = AfterSuite(func() {
-	log.Println("====================[ AfterSuite ]========================")
+	KubearmorPortForwardStop()
 })
 
 var _ = Describe("Smoke", func() {
 
 	BeforeEach(func() {
-		log.Println("--------------[ BeforeEach ]------------------")
 	})
 
 	AfterEach(func() {
-		log.Println("--------------[ AfterEach ]------------------")
-		util.KspDeleteAll()
+		KarmorLogStop()
+		KspDeleteAll()
 	})
 
 	Describe("Policy Apply", func() {
 		It("can block execution of cmd as part of parent process", func() {
 			// Get wordpress pod
-			pods, err := util.K8sGetPods("wordpress", "wordpress-mysql")
+			pods, err := K8sGetPods("wordpress", "wordpress-mysql")
 			Expect(err).To(BeNil())
 			Expect(len(pods)).To(Equal(1))
 
 			// Apply policy
-			sout, err := util.Kubectl("apply -f ksp-wordpress-block-process.yaml")
+			err = K8sApply([]string{"ksp-wordpress-block-process.yaml"})
 			Expect(err).To(BeNil())
-			fmt.Println(sout)
 
+			// Start Kubearmor Logs
+			err = KarmorLogStart("policy", "wordpress-mysql", "Process", pods[0])
+			Expect(err).To(BeNil())
+
+			actCnt := 3
 			// exec command in pod
-			sout, _, err = util.K8sExecInPod(pods[0], "wordpress-mysql", []string{"bash", "-c", "apt"})
-			Expect(err).To(BeNil())
-			fmt.Println(sout)
-			Expect(sout).To(ContainSubstring("Permission denied"))
+			for i := 0; i < actCnt; i++ {
+				sout, _, err := K8sExecInPod(pods[0], "wordpress-mysql", []string{"bash", "-c", "apt"})
+				Expect(err).To(BeNil())
+				fmt.Println(sout)
+				Expect(sout).To(ContainSubstring("Permission denied"))
+				time.Sleep(10 * time.Millisecond)
+			}
 
-			// Validate alert event
+			// check policy violation alert
+			logs, alerts, err := KarmorGetLogs(5*time.Second, actCnt)
+			Expect(err).To(BeNil())
+			Expect(len(logs)).To(BeNumerically("==", 0))
+			Expect(len(alerts)).To(BeNumerically(">=", 1))
+			fmt.Printf("Lost %d events from kubearmor\n", actCnt-len(alerts))
+			Expect(alerts[0].PolicyName).To(Equal("ksp-wordpress-block-process"))
+			Expect(alerts[0].Severity).To(Equal("3"))
 		})
 	})
 

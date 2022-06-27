@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
-	karmorins "github.com/kubearmor/kubearmor-client/install"
-	karmorcli "github.com/kubearmor/kubearmor-client/k8s"
+	kins "github.com/kubearmor/kubearmor-client/install"
+	kcli "github.com/kubearmor/kubearmor-client/k8s"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,13 +19,14 @@ import (
 	"k8s.io/kubectl/pkg/scheme"
 )
 
-var k8sClient *karmorcli.Client
+var k8sClient *kcli.Client
+var stopChan chan struct{}
 
 func isK8sEnv() bool {
 	if k8sClient != nil {
 		return true
 	}
-	cli, err := karmorcli.ConnectK8sClient()
+	cli, err := kcli.ConnectK8sClient()
 	if err != nil {
 		return false
 	}
@@ -31,8 +34,8 @@ func isK8sEnv() bool {
 	return true
 }
 
-func getOptions() karmorins.Options {
-	return karmorins.Options{
+func getOptions() kins.Options {
+	return kins.Options{
 		"kube-system",
 		"kubearmor/kubearmor:stable",
 		"",
@@ -44,7 +47,7 @@ func k8sInstallKubearmor() error {
 	if !isK8sEnv() {
 		return errors.New("could not find k8s env")
 	}
-	err := karmorins.K8sInstaller(k8sClient, getOptions())
+	err := kins.K8sInstaller(k8sClient, getOptions())
 	if err != nil {
 		log.Error("failed to install kubearmor")
 		return err
@@ -57,7 +60,7 @@ func k8sUninstallKubearmor() {
 		log.Error("could not find k8s env to uninstall kubearmor")
 		return
 	}
-	err := karmorins.K8sUninstaller(k8sClient, getOptions())
+	err := kins.K8sUninstaller(k8sClient, getOptions())
 	if err != nil {
 		log.Error("failed to install kubearmor")
 		return
@@ -128,7 +131,7 @@ func K8sDeploymentCheck(depname string, ns string, timeout int) (string, error) 
 	return "", errors.New("deployment not found")
 }
 
-func K8sGetPods(podPrefix string, ns string) ([]string, error) {
+func K8sGetPods(podstr string, ns string) ([]string, error) {
 	podList, err := k8sClient.K8sClientset.CoreV1().Pods(ns).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		log.Errorf("k8s list pods failed. error=%s", err.Error())
@@ -136,7 +139,9 @@ func K8sGetPods(podPrefix string, ns string) ([]string, error) {
 	}
 	pods := []string{}
 	for _, p := range podList.Items {
-		if strings.HasPrefix(p.ObjectMeta.Name, podPrefix) {
+		if strings.HasPrefix(p.ObjectMeta.Name, podstr) {
+			pods = append(pods, p.ObjectMeta.Name)
+		} else if match, _ := regexp.MatchString(podstr, p.ObjectMeta.Name); match {
 			pods = append(pods, p.ObjectMeta.Name)
 		}
 	}
@@ -177,7 +182,6 @@ func StartKubearmor(k8sMode bool) error {
 		log.Error("could not find k8s env")
 		return errors.New("no k8s env")
 	}
-	return nil //XXX REMOVE THIS
 	if k8sMode {
 		log.Println("starting kubearmor")
 		err := k8sInstallKubearmor()
@@ -197,10 +201,33 @@ func StartKubearmor(k8sMode bool) error {
 
 // Kubectl execute
 func Kubectl(cmdstr string) (string, error) {
-	cmdf := strings.Fields(cmdstr)
+	cmdf := []string{"--request-timeout", "20s"}
+	cmdf = append(cmdf, strings.Fields(cmdstr)...)
 	cmd := exec.Command("kubectl", cmdf...)
 	sout, err := cmd.Output()
 	return string(sout), err
+}
+
+// K8sApply execute
+func K8sApply(files []string) error {
+	for _, f := range files {
+		_, err := Kubectl(fmt.Sprintf("apply -f %s", f))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// K8sDelete
+func K8sDelete(files []string) error {
+	for _, f := range files {
+		_, err := Kubectl(fmt.Sprintf("delete -f %s", f))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func KspDeleteAll() {
@@ -217,3 +244,20 @@ func KspDeleteAll() {
 		Kubectl("delete ksp " + field[0] + " -n " + field[1])
 	}
 }
+
+/*
+func JsonGetValue(evt []byte, fields ...string) (map[string]string, error) {
+	var res map[string]interface{}
+
+	fmap := make(map[string]string)
+	err := json.Unmarshal(evt, &res)
+	if err != nil {
+		log.Errorf("event json unmarshal failed. Error:%s", err.Error())
+		return fmap, err
+	}
+	for _, f := range fields {
+		fmap[f] = res[f].(string)
+	}
+	return fmap, nil
+}
+*/
