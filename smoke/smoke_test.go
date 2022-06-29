@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	. "github.com/kubearmor/karts/kartutil"
+	. "github.com/kubearmor/karts/util"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
