@@ -49,7 +49,7 @@ func k8sInstallKubearmor() error {
 	}
 	err := kins.K8sInstaller(k8sClient, getOptions())
 	if err != nil {
-		log.Error("failed to install kubearmor")
+		log.Error("failed to install kubearmor err=%s", err)
 		return err
 	}
 	return nil
@@ -62,7 +62,7 @@ func k8sUninstallKubearmor() {
 	}
 	err := kins.K8sUninstaller(k8sClient, getOptions())
 	if err != nil {
-		log.Error("failed to install kubearmor")
+		log.Error("failed to install kubearmor err=%s", err)
 		return
 	}
 }
@@ -76,7 +76,7 @@ func K8sDaemonSetCheck(dsname string, ns string, timeout int) (string, error) {
 	for t := 0; t <= timeout; t++ {
 		dsset, err := k8sClient.K8sClientset.AppsV1().DaemonSets(ns).List(context.Background(), metav1.ListOptions{})
 		if err != nil {
-			log.Errorf("could not get daemonsets error:%s", err.Error())
+			log.Errorf("could not get daemonsets error:%s", err)
 			return "", err
 		}
 		for _, ds := range dsset.Items {
@@ -108,7 +108,7 @@ func K8sDeploymentCheck(depname string, ns string, timeout int) (string, error) 
 	for t := 0; t <= timeout; t++ {
 		depset, err := k8sClient.K8sClientset.AppsV1().Deployments(ns).List(context.Background(), metav1.ListOptions{})
 		if err != nil {
-			log.Errorf("could not get deployment. error:%s", err.Error())
+			log.Errorf("could not get deployment. error:%s", err)
 			return "", err
 		}
 		for _, dep := range depset.Items {
@@ -131,19 +131,30 @@ func K8sDeploymentCheck(depname string, ns string, timeout int) (string, error) 
 	return "", errors.New("deployment not found")
 }
 
-func K8sGetPods(podstr string, ns string) ([]string, error) {
+func K8sGetPods(podstr string, ns string, timeout int) ([]string, error) {
 	podList, err := k8sClient.K8sClientset.CoreV1().Pods(ns).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		log.Errorf("k8s list pods failed. error=%s", err.Error())
+		log.Errorf("k8s list pods failed. error=%s", err)
 		return nil, err
 	}
 	pods := []string{}
-	for _, p := range podList.Items {
-		if strings.HasPrefix(p.ObjectMeta.Name, podstr) {
-			pods = append(pods, p.ObjectMeta.Name)
-		} else if match, _ := regexp.MatchString(podstr, p.ObjectMeta.Name); match {
-			pods = append(pods, p.ObjectMeta.Name)
+	for t := 0; t <= timeout; t++ {
+		for _, p := range podList.Items {
+			if p.Status.Phase != v1.PodRunning {
+				continue
+			}
+			if strings.HasPrefix(p.ObjectMeta.Name, podstr) {
+				log.Printf("prefix match prefix=%s podName=%s", podstr, p.ObjectMeta.Name)
+				pods = append(pods, p.ObjectMeta.Name)
+			} else if match, _ := regexp.MatchString(podstr, p.ObjectMeta.Name); match {
+				log.Printf("regexp match prefix=%s podName=%s", podstr, p.ObjectMeta.Name)
+				pods = append(pods, p.ObjectMeta.Name)
+			}
 		}
+		if timeout == 0 || len(pods) > 0 {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 	if len(pods) == 0 {
 		return nil, errors.New("pod not found")
@@ -186,7 +197,7 @@ func StartKubearmor(k8sMode bool) error {
 		log.Println("starting kubearmor")
 		err := k8sInstallKubearmor()
 		if err != nil {
-			log.Errorf("start kubearmor failed error=%s", err.Error())
+			log.Errorf("start kubearmor failed error=%s", err)
 			return err
 		}
 	} else {
@@ -244,20 +255,3 @@ func KspDeleteAll() {
 		Kubectl("delete ksp " + field[0] + " -n " + field[1])
 	}
 }
-
-/*
-func JsonGetValue(evt []byte, fields ...string) (map[string]string, error) {
-	var res map[string]interface{}
-
-	fmap := make(map[string]string)
-	err := json.Unmarshal(evt, &res)
-	if err != nil {
-		log.Errorf("event json unmarshal failed. Error:%s", err.Error())
-		return fmap, err
-	}
-	for _, f := range fields {
-		fmap[f] = res[f].(string)
-	}
-	return fmap, nil
-}
-*/

@@ -69,7 +69,7 @@ func KubearmorPortForward() error {
 		return errors.New("kubearmor port forward is already in progress")
 	}
 	ns := "kube-system"
-	pods, err := K8sGetPods("^kubearmor-.....$", ns)
+	pods, err := K8sGetPods("^kubearmor-.....$", ns, 20)
 	if err != nil {
 		log.Errorf("could not get kubearmor pods Error=%s", err.Error())
 		return err

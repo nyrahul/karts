@@ -1,7 +1,7 @@
 .PHONY: build
 build:
 	@go mod tidy
-	@ginkgo -r
+	@ginkgo -r --flake-attempts=3
 
 .PHONY: test
 test:
